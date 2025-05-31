@@ -230,15 +230,13 @@ class TranscriberGUI:
 
             # Import the transcriber module
             from transcriber.engine import WhisperEngine
-            from transcriber.audio import load_audio
 
             # Initialize the engine and transcribe
             engine = WhisperEngine()
-            logger.debug(f"Loading audio file: {input_file}")
-            audio = load_audio(input_file)
-            logger.debug("Audio loaded successfully")
+            logger.debug(f"Processing audio file: {input_file}")
             
-            result = engine.transcribe(audio)
+            # Pass the file path directly to transcribe
+            result = engine.transcribe(input_file)
             logger.debug("Transcription complete")
 
             # Save the result

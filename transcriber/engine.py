@@ -4,6 +4,9 @@ import whisper
 import time
 from typing import Optional, Dict, Union
 import numpy as np
+import logging
+
+logger = logging.getLogger(__name__)
 
 class WhisperEngine:
     """
@@ -45,8 +48,18 @@ class WhisperEngine:
             'condition_on_previous_text': True,
         }
         
-        # Get English translation
-        return model.transcribe(audio, **options)
+        try:
+            # If audio is a string (file path), load it first
+            if isinstance(audio, (str, Path)):
+                logger.debug(f"Loading audio from file: {audio}")
+                audio = whisper.load_audio(str(audio))
+                logger.debug("Audio loaded successfully")
+            
+            # Get English translation
+            return model.transcribe(audio, **options)
+        except Exception as e:
+            logger.error(f"Error during transcription: {e}")
+            raise
 
     def transcribe_wav(self, wav_path: Path) -> str:
         """
