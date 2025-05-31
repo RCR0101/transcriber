@@ -10,10 +10,23 @@ from queue import Queue, Empty
 import multiprocessing
 import torch
 import logging
+import tempfile
+from datetime import datetime
 
-# Set up logging
-logging.basicConfig(level=logging.DEBUG)
+# Set up logging to file
+log_file = os.path.join(tempfile.gettempdir(), 'transcriber_gui.log')
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(log_file),
+        logging.StreamHandler()
+    ]
+)
 logger = logging.getLogger(__name__)
+logger.info(f"Starting application. Log file: {log_file}")
+logger.info(f"Python version: {sys.version}")
+logger.info(f"System platform: {sys.platform}")
 
 # Force PyTorch to use only one thread to prevent multiple instances
 torch.set_num_threads(1)
@@ -29,26 +42,39 @@ def normalize_path(path):
     if not path:
         return path
     try:
-        # Convert to absolute path and resolve symlinks
+        # Convert to absolute path
         abs_path = os.path.abspath(os.path.expanduser(path))
-        # Resolve any relative parts and symlinks
-        real_path = os.path.realpath(abs_path)
-        logger.debug(f"Normalizing path: {path} -> {real_path}")
-        return real_path
+        # Use pathlib for robust path handling
+        norm_path = str(pathlib.Path(abs_path))
+        logger.debug(f"Normalizing path: {path} -> {norm_path}")
+        return norm_path
     except Exception as e:
         logger.error(f"Error normalizing path {path}: {e}")
         return path
 
 def get_bundle_dir():
     """Get the directory where the application is running"""
-    if getattr(sys, 'frozen', False):
-        # If we're running in a bundle
-        bundle_dir = sys._MEIPASS
-    else:
-        # If we're running in development
-        bundle_dir = os.path.dirname(os.path.abspath(__file__))
-    logger.debug(f"Bundle directory: {bundle_dir}")
-    return bundle_dir
+    try:
+        if getattr(sys, 'frozen', False):
+            # PyInstaller creates a temp folder and stores path in _MEIPASS
+            bundle_dir = sys._MEIPASS
+            logger.info(f"Running in PyInstaller bundle: {bundle_dir}")
+        else:
+            bundle_dir = os.path.dirname(os.path.abspath(__file__))
+            logger.info(f"Running in development mode: {bundle_dir}")
+        
+        # Log the contents of the bundle directory
+        logger.debug("Bundle directory contents:")
+        for root, dirs, files in os.walk(bundle_dir):
+            for name in files:
+                logger.debug(f"  {os.path.join(root, name)}")
+            for name in dirs:
+                logger.debug(f"  {os.path.join(root, name)}/")
+        
+        return bundle_dir
+    except Exception as e:
+        logger.error(f"Error getting bundle directory: {e}")
+        return os.path.dirname(os.path.abspath(__file__))
 
 class TranscriberGUI:
     def __init__(self, root):
