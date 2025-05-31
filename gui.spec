@@ -8,13 +8,26 @@ a = Analysis(
     ['gui.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[
+        ('transcriber', 'transcriber'),  # Include the entire transcriber module
+        *collect_data_files('whisper'),  # Include whisper data files
+        *collect_data_files('tkinter'),  # Include tkinter data files
+    ],
     hiddenimports=[
         'tkinter',
         'tkinter.ttk',
         'tkinter.messagebox',
         'tkinter.filedialog',
         '_tkinter',
+        'transcriber',
+        'transcriber.engine',
+        'transcriber.audio',
+        'whisper',
+        'numpy',
+        'numpy.core',
+        'numpy.lib',
+        'numpy.linspace',
+        'torch',
     ],
     hookspath=[],
     hooksconfig={},
@@ -25,29 +38,6 @@ a = Analysis(
     cipher=block_cipher,
     noarchive=False,
 )
-
-# Add tkinter data files
-a.datas += collect_data_files('tkinter')
-
-# Transcriber Analysis (to bundle the transcriber with the GUI)
-transcriber = Analysis(
-    ['transcriber/cli.py'],
-    pathex=[],
-    binaries=[],
-    datas=collect_data_files('whisper'),  # Include whisper model files
-    hiddenimports=['whisper', 'transcriber.engine', 'transcriber.audio'],
-    hookspath=[],
-    hooksconfig={},
-    runtime_hooks=[],
-    excludes=[],
-    win_no_prefer_redirects=False,
-    win_private_assemblies=False,
-    cipher=block_cipher,
-    noarchive=False,
-)
-
-# Merge analyses
-MERGE((a, 'gui', 'gui'), (transcriber, 'transcriber', 'transcriber'))
 
 # Create the GUI executable
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)

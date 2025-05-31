@@ -4,6 +4,20 @@ import subprocess
 import os
 import pathlib
 import sys
+import threading
+import importlib.util
+from queue import Queue
+import multiprocessing
+import torch
+
+# Force PyTorch to use only one thread to prevent multiple instances
+torch.set_num_threads(1)
+
+# Ensure numpy only uses one thread
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
 
 class TranscriberGUI:
     def __init__(self, root):
@@ -30,8 +44,18 @@ class TranscriberGUI:
         self.progress_var = tk.StringVar(value="Ready")
         ttk.Label(main_frame, textvariable=self.progress_var).grid(row=2, column=0, columnspan=3, pady=10)
         
+        # Progress bar
+        self.progress_bar = ttk.Progressbar(main_frame, mode='indeterminate')
+        self.progress_bar.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
+        self.progress_bar.grid_remove()  # Hide initially
+        
         # Transcribe button
-        ttk.Button(main_frame, text="Transcribe", command=self.transcribe).grid(row=3, column=0, columnspan=3, pady=10)
+        self.transcribe_btn = ttk.Button(main_frame, text="Transcribe", command=self.start_transcription)
+        self.transcribe_btn.grid(row=4, column=0, columnspan=3, pady=10)
+        
+        # Message queue for thread communication
+        self.message_queue = Queue()
+        self.check_message_queue()
 
     def select_input(self):
         filename = filedialog.askopenfilename(
@@ -54,7 +78,30 @@ class TranscriberGUI:
         if filename:
             self.output_path.set(filename)
 
-    def transcribe(self):
+    def check_message_queue(self):
+        """Check for messages from the transcription thread"""
+        try:
+            while True:
+                msg = self.message_queue.get_nowait()
+                if msg.get('type') == 'progress':
+                    self.progress_var.set(msg['text'])
+                elif msg.get('type') == 'complete':
+                    self.progress_var.set(msg['text'])
+                    self.progress_bar.stop()
+                    self.progress_bar.grid_remove()
+                    self.transcribe_btn.config(state='normal')
+                elif msg.get('type') == 'error':
+                    self.progress_var.set(f"Error: {msg['text']}")
+                    self.progress_bar.stop()
+                    self.progress_bar.grid_remove()
+                    self.transcribe_btn.config(state='normal')
+        except:
+            pass
+        finally:
+            # Schedule the next check
+            self.root.after(100, self.check_message_queue)
+
+    def start_transcription(self):
         input_file = self.input_path.get()
         output_file = self.output_path.get()
         
@@ -68,34 +115,71 @@ class TranscriberGUI:
             output_file = str(input_path.parent / f"{input_path.stem}.txt")
             self.output_path.set(output_file)
         
+        # Disable the transcribe button and show progress
+        self.transcribe_btn.config(state='disabled')
+        self.progress_bar.grid()
+        self.progress_bar.start(10)
         self.progress_var.set("Transcribing... Please wait")
-        self.root.update()
         
+        # Start transcription in a separate thread
+        thread = threading.Thread(
+            target=self.run_transcription,
+            args=(input_file, output_file),
+            daemon=True
+        )
+        thread.start()
+
+    def run_transcription(self, input_file, output_file):
         try:
             # Get the directory where this script is located
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            
-            # In the bundled version, we need to use sys._MEIPASS to get the correct path
             if getattr(sys, 'frozen', False):
+                # If we're running in a bundle
                 script_dir = sys._MEIPASS
-            
-            cli_path = os.path.join(script_dir, "transcriber", "cli.py")
-            
-            # Run the transcriber using Python
-            process = subprocess.run(
-                [sys.executable, cli_path, input_file, "-o", output_file],
-                capture_output=True,
-                text=True
-            )
-            
-            if process.returncode == 0:
-                self.progress_var.set(f"Transcription complete! Saved to: {output_file}")
             else:
-                self.progress_var.set(f"Error: {process.stderr}")
+                # If we're running in development
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+
+            # Add the script directory to Python path so we can import transcriber
+            if script_dir not in sys.path:
+                sys.path.insert(0, script_dir)
+
+            # Import the transcriber module
+            from transcriber.engine import WhisperEngine
+            from transcriber.audio import load_audio
+
+            # Initialize the engine and transcribe
+            engine = WhisperEngine()
+            audio = load_audio(input_file)
+            result = engine.transcribe(audio)
+
+            # Save the result
+            with open(output_file, 'w', encoding='utf-8') as f:
+                f.write(result['text'])
+
+            # Signal completion
+            self.message_queue.put({
+                'type': 'complete',
+                'text': f"Transcription complete! Saved to: {output_file}"
+            })
         except Exception as e:
-            self.progress_var.set(f"Error: {str(e)}")
+            # Signal error
+            self.message_queue.put({
+                'type': 'error',
+                'text': str(e)
+            })
 
 def main():
+    # Ensure only one instance runs
+    multiprocessing.freeze_support()
+    
+    # Set process name for better identification
+    try:
+        import setproctitle
+        setproctitle.setproctitle('TranscriberGUI')
+    except ImportError:
+        pass
+    
+    # Create and run the GUI
     root = tk.Tk()
     app = TranscriberGUI(root)
     root.mainloop()

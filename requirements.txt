@@ -3,3 +3,7 @@ ffmpeg-python==0.2.0
 click==8.1.7
 tqdm==4.66.4
 pyinstaller==6.5.0
+torch
+numpy
+tkinter
+setproctitle

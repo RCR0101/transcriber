@@ -2,7 +2,8 @@ from __future__ import annotations
 from pathlib import Path
 import whisper
 import time
-from typing import Optional
+from typing import Optional, Dict, Union
+import numpy as np
 
 class WhisperEngine:
     """
@@ -18,15 +19,15 @@ class WhisperEngine:
             self._model = whisper.load_model(self.model_size)
         return self._model
 
-    def transcribe_wav(self, wav_path: Path) -> str:
+    def transcribe(self, audio: Union[str, np.ndarray]) -> Dict:
         """
-        Transcribe audio and translate to English.
+        Transcribe audio data or audio file and translate to English.
         
         Args:
-            wav_path: Path to WAV file
-        
+            audio: Either a numpy array of audio data or a path to an audio file
+            
         Returns:
-            Transcribed and translated text with timestamps
+            Dictionary containing transcription results
         """
         model = self.load()
         
@@ -45,7 +46,19 @@ class WhisperEngine:
         }
         
         # Get English translation
-        result = model.transcribe(str(wav_path), **options)
+        return model.transcribe(audio, **options)
+
+    def transcribe_wav(self, wav_path: Path) -> str:
+        """
+        Transcribe audio file and translate to English, returning formatted text.
+        
+        Args:
+            wav_path: Path to WAV file
+        
+        Returns:
+            Transcribed and translated text with timestamps
+        """
+        result = self.transcribe(str(wav_path))
         
         # Format text with timestamps
         output_lines = []
