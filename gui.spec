@@ -1,5 +1,5 @@
 import os
-from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
 
 block_cipher = None
 
@@ -9,7 +9,13 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[],
-    hiddenimports=['tkinter'],
+    hiddenimports=[
+        'tkinter',
+        'tkinter.ttk',
+        'tkinter.messagebox',
+        'tkinter.filedialog',
+        '_tkinter',
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -19,6 +25,9 @@ a = Analysis(
     cipher=block_cipher,
     noarchive=False,
 )
+
+# Add tkinter data files
+a.datas += collect_data_files('tkinter')
 
 # Transcriber Analysis (to bundle the transcriber with the GUI)
 transcriber = Analysis(
