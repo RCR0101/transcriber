@@ -90,3 +90,7 @@ The executable will be created in the `dist` directory.
     - Check Windows Defender or antivirus settings
     - Make sure you have write permissions in the folder
   - If you get permission errors, try running the application as administrator
+
+
+## Fully Functional Commits
+- Commit fix: and more, (9efd22a12baf1b8ca3e912150366652bcb227b31) (It is not very time-friendly)
