@@ -26,3 +26,4 @@ pip-wheel-metadata/
 
 # Models directory (populated by fetch_model.py)
 models/
+recs/
