@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import filedialog, ttk
+from tkinter import filedialog, ttk, messagebox
 import subprocess
 import os
 import pathlib
@@ -9,6 +9,11 @@ import importlib.util
 from queue import Queue, Empty
 import multiprocessing
 import torch
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 # Force PyTorch to use only one thread to prevent multiple instances
 torch.set_num_threads(1)
@@ -23,13 +28,35 @@ def normalize_path(path):
     """Normalize path for Windows compatibility"""
     if not path:
         return path
-    norm_path = os.path.abspath(os.path.expanduser(path))
-    return norm_path.replace('/', '\\') if sys.platform == 'win32' else norm_path
+    try:
+        # Convert to absolute path and resolve symlinks
+        abs_path = os.path.abspath(os.path.expanduser(path))
+        # Resolve any relative parts and symlinks
+        real_path = os.path.realpath(abs_path)
+        logger.debug(f"Normalizing path: {path} -> {real_path}")
+        return real_path
+    except Exception as e:
+        logger.error(f"Error normalizing path {path}: {e}")
+        return path
+
+def get_bundle_dir():
+    """Get the directory where the application is running"""
+    if getattr(sys, 'frozen', False):
+        # If we're running in a bundle
+        bundle_dir = sys._MEIPASS
+    else:
+        # If we're running in development
+        bundle_dir = os.path.dirname(os.path.abspath(__file__))
+    logger.debug(f"Bundle directory: {bundle_dir}")
+    return bundle_dir
 
 class TranscriberGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Transcriber GUI")
+        
+        # Store bundle directory
+        self.bundle_dir = get_bundle_dir()
         
         # Create main frame
         main_frame = ttk.Frame(root, padding="10")
@@ -70,11 +97,11 @@ class TranscriberGUI:
             filetypes=[("Audio/Video Files", "*.mp3 *.mp4 *.wav *.m4a *.mov")]
         )
         if filename:
-            # Normalize the path for Windows compatibility
             norm_path = normalize_path(filename)
+            logger.debug(f"Selected input file: {norm_path}")
             self.input_path.set(norm_path)
             # Set default output path
-            input_path = pathlib.Path(filename)  # Use original path for pathlib
+            input_path = pathlib.Path(norm_path)
             default_output = input_path.parent / f"{input_path.stem}.txt"
             self.output_path.set(normalize_path(str(default_output)))
 
@@ -85,7 +112,9 @@ class TranscriberGUI:
             filetypes=[("Text Files", "*.txt")]
         )
         if filename:
-            self.output_path.set(normalize_path(filename))
+            norm_path = normalize_path(filename)
+            logger.debug(f"Selected output file: {norm_path}")
+            self.output_path.set(norm_path)
 
     def check_message_queue(self):
         """Check for messages from the transcription thread"""
@@ -100,9 +129,11 @@ class TranscriberGUI:
                 self.transcribe_btn.config(state='normal')
             elif msg.get('type') == 'error':
                 self.progress_var.set(f"Error: {msg['text']}")
+                logger.error(f"Transcription error: {msg['text']}")
                 self.progress_bar.stop()
                 self.progress_bar.grid_remove()
                 self.transcribe_btn.config(state='normal')
+                messagebox.showerror("Error", msg['text'])
         except Empty:
             pass
         finally:
@@ -110,8 +141,8 @@ class TranscriberGUI:
             self.root.after(100, self.check_message_queue)
 
     def start_transcription(self):
-        input_file = self.input_path.get().strip('"')  # Remove quotes for processing
-        output_file = self.output_path.get().strip('"')  # Remove quotes for processing
+        input_file = self.input_path.get()
+        output_file = self.output_path.get()
         
         if not input_file:
             self.progress_var.set("Please select an input file")
@@ -123,9 +154,16 @@ class TranscriberGUI:
             output_file = str(input_path.parent / f"{input_path.stem}.txt")
             self.output_path.set(normalize_path(output_file))
         
+        # Log file paths
+        logger.debug(f"Processing input file: {input_file}")
+        logger.debug(f"Output file: {output_file}")
+        
         # Verify files exist and are accessible
         if not os.path.exists(input_file):
-            self.progress_var.set(f"Error: Input file not found: {input_file}")
+            error_msg = f"Input file not found: {input_file}"
+            logger.error(error_msg)
+            messagebox.showerror("Error", error_msg)
+            self.progress_var.set(f"Error: {error_msg}")
             return
         
         try:
@@ -136,7 +174,10 @@ class TranscriberGUI:
             with open(output_file, 'a') as f:
                 pass
         except Exception as e:
-            self.progress_var.set(f"Error: Cannot access output file: {str(e)}")
+            error_msg = f"Cannot access output file: {str(e)}"
+            logger.error(error_msg)
+            messagebox.showerror("Error", error_msg)
+            self.progress_var.set(f"Error: {error_msg}")
             return
         
         # Disable the transcribe button and show progress
@@ -155,17 +196,11 @@ class TranscriberGUI:
 
     def run_transcription(self, input_file, output_file):
         try:
-            # Get the directory where this script is located
-            if getattr(sys, 'frozen', False):
-                # If we're running in a bundle
-                script_dir = sys._MEIPASS
-            else:
-                # If we're running in development
-                script_dir = os.path.dirname(os.path.abspath(__file__))
-
-            # Add the script directory to Python path so we can import transcriber
-            if script_dir not in sys.path:
-                sys.path.insert(0, script_dir)
+            # Add bundle directory to Python path
+            if self.bundle_dir not in sys.path:
+                sys.path.insert(0, self.bundle_dir)
+                logger.debug(f"Added to sys.path: {self.bundle_dir}")
+                logger.debug(f"Current sys.path: {sys.path}")
 
             # Import the transcriber module
             from transcriber.engine import WhisperEngine
@@ -173,12 +208,17 @@ class TranscriberGUI:
 
             # Initialize the engine and transcribe
             engine = WhisperEngine()
+            logger.debug(f"Loading audio file: {input_file}")
             audio = load_audio(input_file)
+            logger.debug("Audio loaded successfully")
+            
             result = engine.transcribe(audio)
+            logger.debug("Transcription complete")
 
             # Save the result
             with open(output_file, 'w', encoding='utf-8') as f:
                 f.write(result['text'])
+            logger.debug(f"Results saved to: {output_file}")
 
             # Signal completion
             self.message_queue.put({
@@ -186,6 +226,7 @@ class TranscriberGUI:
                 'text': f"Transcription complete! Saved to: {output_file}"
             })
         except Exception as e:
+            logger.exception("Error during transcription")
             # Signal error
             self.message_queue.put({
                 'type': 'error',
@@ -208,14 +249,8 @@ def main():
         
         app = TranscriberGUI(root)
         root.mainloop()
-    except PermissionError as e:
-        # Show error dialog if we can't access files
-        import tkinter.messagebox as messagebox
-        messagebox.showerror("Permission Error", 
-            "Cannot access required files. Try running as administrator or moving to a different folder.")
-        sys.exit(1)
     except Exception as e:
-        import tkinter.messagebox as messagebox
+        logger.exception("Application error")
         messagebox.showerror("Error", str(e))
         sys.exit(1)
 
