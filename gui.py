@@ -3,6 +3,7 @@ from tkinter import filedialog, ttk
 import subprocess
 import os
 import pathlib
+import sys
 
 class TranscriberGUI:
     def __init__(self, root):
@@ -73,11 +74,16 @@ class TranscriberGUI:
         try:
             # Get the directory where this script is located
             script_dir = os.path.dirname(os.path.abspath(__file__))
-            transcriber_path = os.path.join(script_dir, "dist", "transcriber")
             
-            # Run the transcriber
+            # In the bundled version, we need to use sys._MEIPASS to get the correct path
+            if getattr(sys, 'frozen', False):
+                script_dir = sys._MEIPASS
+            
+            cli_path = os.path.join(script_dir, "transcriber", "cli.py")
+            
+            # Run the transcriber using Python
             process = subprocess.run(
-                [transcriber_path, input_file, "-o", output_file],
+                [sys.executable, cli_path, input_file, "-o", output_file],
                 capture_output=True,
                 text=True
             )
