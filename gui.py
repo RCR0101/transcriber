@@ -6,7 +6,7 @@ import pathlib
 import sys
 import threading
 import importlib.util
-from queue import Queue
+from queue import Queue, Empty
 import multiprocessing
 import torch
 
@@ -18,6 +18,13 @@ os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
+
+def normalize_path(path):
+    """Normalize path for Windows compatibility"""
+    if not path:
+        return path
+    norm_path = os.path.abspath(os.path.expanduser(path))
+    return norm_path.replace('/', '\\') if sys.platform == 'win32' else norm_path
 
 class TranscriberGUI:
     def __init__(self, root):
@@ -63,11 +70,13 @@ class TranscriberGUI:
             filetypes=[("Audio/Video Files", "*.mp3 *.mp4 *.wav *.m4a *.mov")]
         )
         if filename:
-            self.input_path.set(filename)
+            # Normalize the path for Windows compatibility
+            norm_path = normalize_path(filename)
+            self.input_path.set(norm_path)
             # Set default output path
-            input_path = pathlib.Path(filename)
+            input_path = pathlib.Path(filename)  # Use original path for pathlib
             default_output = input_path.parent / f"{input_path.stem}.txt"
-            self.output_path.set(str(default_output))
+            self.output_path.set(normalize_path(str(default_output)))
 
     def select_output(self):
         filename = filedialog.asksaveasfilename(
@@ -76,34 +85,33 @@ class TranscriberGUI:
             filetypes=[("Text Files", "*.txt")]
         )
         if filename:
-            self.output_path.set(filename)
+            self.output_path.set(normalize_path(filename))
 
     def check_message_queue(self):
         """Check for messages from the transcription thread"""
         try:
-            while True:
-                msg = self.message_queue.get_nowait()
-                if msg.get('type') == 'progress':
-                    self.progress_var.set(msg['text'])
-                elif msg.get('type') == 'complete':
-                    self.progress_var.set(msg['text'])
-                    self.progress_bar.stop()
-                    self.progress_bar.grid_remove()
-                    self.transcribe_btn.config(state='normal')
-                elif msg.get('type') == 'error':
-                    self.progress_var.set(f"Error: {msg['text']}")
-                    self.progress_bar.stop()
-                    self.progress_bar.grid_remove()
-                    self.transcribe_btn.config(state='normal')
-        except:
+            msg = self.message_queue.get_nowait()
+            if msg.get('type') == 'progress':
+                self.progress_var.set(msg['text'])
+            elif msg.get('type') == 'complete':
+                self.progress_var.set(msg['text'])
+                self.progress_bar.stop()
+                self.progress_bar.grid_remove()
+                self.transcribe_btn.config(state='normal')
+            elif msg.get('type') == 'error':
+                self.progress_var.set(f"Error: {msg['text']}")
+                self.progress_bar.stop()
+                self.progress_bar.grid_remove()
+                self.transcribe_btn.config(state='normal')
+        except Empty:
             pass
         finally:
             # Schedule the next check
             self.root.after(100, self.check_message_queue)
 
     def start_transcription(self):
-        input_file = self.input_path.get()
-        output_file = self.output_path.get()
+        input_file = self.input_path.get().strip('"')  # Remove quotes for processing
+        output_file = self.output_path.get().strip('"')  # Remove quotes for processing
         
         if not input_file:
             self.progress_var.set("Please select an input file")
@@ -113,7 +121,23 @@ class TranscriberGUI:
             # Use default output path if none specified
             input_path = pathlib.Path(input_file)
             output_file = str(input_path.parent / f"{input_path.stem}.txt")
-            self.output_path.set(output_file)
+            self.output_path.set(normalize_path(output_file))
+        
+        # Verify files exist and are accessible
+        if not os.path.exists(input_file):
+            self.progress_var.set(f"Error: Input file not found: {input_file}")
+            return
+        
+        try:
+            # Test if we can open the output file
+            output_dir = os.path.dirname(output_file)
+            if output_dir and not os.path.exists(output_dir):
+                os.makedirs(output_dir)
+            with open(output_file, 'a') as f:
+                pass
+        except Exception as e:
+            self.progress_var.set(f"Error: Cannot access output file: {str(e)}")
+            return
         
         # Disable the transcribe button and show progress
         self.transcribe_btn.config(state='disabled')
@@ -171,13 +195,6 @@ class TranscriberGUI:
 def main():
     # Ensure only one instance runs
     multiprocessing.freeze_support()
-    
-    # Set process name for better identification
-    try:
-        import setproctitle
-        setproctitle.setproctitle('TranscriberGUI')
-    except ImportError:
-        pass
     
     # Create and run the GUI
     root = tk.Tk()
