@@ -8,6 +8,7 @@ datas = [
     ('transcriber', 'transcriber'),  # Include the entire transcriber module
     *collect_data_files('whisper'),  # Include whisper data files
     *collect_data_files('tkinter'),  # Include tkinter data files
+    *collect_data_files('soundfile'),  # Include soundfile data files
 ]
 
 # Add FFmpeg for Windows if it exists
@@ -36,6 +37,7 @@ a = Analysis(
         'numpy.linspace',
         'torch',
         'tqdm',
+        'soundfile',
     ],
     hookspath=[],
     hooksconfig={},

@@ -6,3 +6,4 @@ pyinstaller==6.5.0
 torch
 numpy
 setproctitle
+soundfile
