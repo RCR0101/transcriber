@@ -79,3 +79,14 @@ The executable will be created in the `dist` directory.
 - If you get "FFmpeg not found" error, ensure FFmpeg is properly installed and in your system PATH
 - If you get tkinter-related errors, ensure Python was installed with tkinter support
 - For GPU support, ensure you have CUDA installed and the correct torch version
+- On Windows:
+  - If you get "system cannot find file specified" errors:
+    - Try moving files out of the Downloads folder
+    - Avoid paths with special characters or non-English characters
+    - If using spaces in file paths, the application will handle them automatically
+  - If you get "access is denied" errors:
+    - Move the executable to a non-system folder (e.g., Documents)
+    - Right-click the executable and select "Run as administrator"
+    - Check Windows Defender or antivirus settings
+    - Make sure you have write permissions in the folder
+  - If you get permission errors, try running the application as administrator

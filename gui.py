@@ -193,13 +193,31 @@ class TranscriberGUI:
             })
 
 def main():
-    # Ensure only one instance runs
-    multiprocessing.freeze_support()
-    
-    # Create and run the GUI
-    root = tk.Tk()
-    app = TranscriberGUI(root)
-    root.mainloop()
+    try:
+        # Ensure only one instance runs
+        multiprocessing.freeze_support()
+        
+        # Create and run the GUI
+        root = tk.Tk()
+        # Set window title
+        root.title("Transcriber")
+        # Try to bring window to front
+        root.lift()
+        root.attributes('-topmost', True)
+        root.attributes('-topmost', False)
+        
+        app = TranscriberGUI(root)
+        root.mainloop()
+    except PermissionError as e:
+        # Show error dialog if we can't access files
+        import tkinter.messagebox as messagebox
+        messagebox.showerror("Permission Error", 
+            "Cannot access required files. Try running as administrator or moving to a different folder.")
+        sys.exit(1)
+    except Exception as e:
+        import tkinter.messagebox as messagebox
+        messagebox.showerror("Error", str(e))
+        sys.exit(1)
 
 if __name__ == "__main__":
     main() 
