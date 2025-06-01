@@ -67,12 +67,48 @@ The executable will be created in the `dist` directory.
 4. Click "Transcribe" and wait for the process to complete
 5. The transcribed text will be saved to the specified output file
 
+## Model Selection and Performance
+
+The application now uses the "small" model by default for optimal speed while maintaining good accuracy. You can modify the model size in `transcriber/engine.py` by changing the `model_size` parameter in the `WhisperEngine` class:
+
+```python
+def __init__(self, model_size: str = "small"):  # Change model size here
+```
+
+Available models and their characteristics:
+- **tiny** (39M parameters): Fastest but lowest accuracy
+- **base** (74M parameters): Fast with decent accuracy
+- **small** (244M parameters): Default, good balance of speed and accuracy
+- **medium** (769M parameters): Higher accuracy but ~2x slower than small
+- **large** (1550M parameters): Highest accuracy but significantly slower
+
+To change the model, you can either:
+1. Modify the default in `transcriber/engine.py`
+2. Pass the model size when creating the engine instance in `gui.py`
+
+Performance Optimizations:
+- **GPU Acceleration**: Automatically enabled if CUDA-capable GPU is available
+- **Chunked Processing**: Long audio files are automatically processed in chunks
+- **Memory Management**: Optimized for handling large files
+- **Half Precision**: Automatically enabled on GPU for faster processing
+
 ## Notes
 
-- First run will download the Whisper model (medium size, ~1.5GB)
-- Transcription speed depends on your CPU/GPU capabilities
-- The application uses the "medium" model by default for a good balance of accuracy and speed
-- Transcription is done locally - no internet connection required after model download
+- First run will download the selected Whisper model:
+  - tiny: ~50MB
+  - base: ~150MB
+  - small: ~500MB
+  - medium: ~1.5GB
+  - large: ~3GB
+- Transcription speed depends on:
+  - Selected model size
+  - CPU/GPU capabilities
+  - Audio file length
+- All processing is done locally - no internet connection required after model download
+- For best performance:
+  - Use GPU if available (5-10x faster)
+  - Use "small" model for good balance of speed/accuracy
+  - For very long files, the chunking system prevents memory issues
 
 ## Troubleshooting
 
@@ -93,4 +129,5 @@ The executable will be created in the `dist` directory.
 
 
 ## Fully Functional Commits
-- Commit fix: and more, (9efd22a12baf1b8ca3e912150366652bcb227b31) (It is not very time-friendly)
+- Commit **fix: and more** , (9efd22a12baf1b8ca3e912150366652bcb227b31) (It is not very time-friendly)
+- Commit **feat: might have made it more efficient**, (7030b9d42ef2fdd53fede5a3e90ce1fda29d10c4) (Faster but may be less accurate)
