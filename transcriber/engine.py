@@ -10,118 +10,95 @@ import torch
 logger = logging.getLogger(__name__)
 
 class WhisperEngine:
-    """
-    Whisper engine that always translates output to English.
-    """
-    def __init__(self, model_size: str = "small"):  # Changed default to small
+    """Whisper engine that handles transcription and translation to English."""
+    
+    def __init__(self, model_size: str = "medium"):
         self.model_size = model_size
         self._model = None
-        self.chunk_size = 24 * 60  # 24 minutes chunks for better memory management
-    
-    def load(self) -> whisper.Whisper:
-        """Load or get the Whisper model"""
+        self.chunk_size = 24 * 60  # 24 minutes chunks
+        logger.info(f"Initializing WhisperEngine with model size: {model_size}")
+        
+    @property
+    def model(self) -> whisper.Whisper:
+        """Lazy load the Whisper model"""
         if self._model is None:
-            # Use GPU if available
             device = "cuda" if torch.cuda.is_available() else "cpu"
+            logger.info(f"Loading Whisper model on device: {device}")
             self._model = whisper.load_model(self.model_size).to(device)
-            
             if device == "cuda":
-                self._model = self._model.half()  # Use half precision for GPU
-                
+                self._model = self._model.half()
         return self._model
 
-    def _chunk_audio(self, audio: np.ndarray, sample_rate: int = 16000) -> list[np.ndarray]:
-        """Split audio into chunks for more efficient processing"""
-        chunk_length = self.chunk_size * sample_rate
-        return [audio[i:i + chunk_length] for i in range(0, len(audio), chunk_length)]
+    def get_transcription_options(self) -> dict:
+        """Get optimized transcription options based on device"""
+        device = next(self.model.parameters()).device
+        return {
+            'task': 'translate',
+            'word_timestamps': True,
+            'best_of': 3,
+            'beam_size': 3,
+            'temperature': [0.0, 0.2, 0.4],
+            'condition_on_previous_text': True,
+            'fp16': device.type == "cuda"
+        }
 
     def transcribe(self, audio: Union[str, np.ndarray]) -> Dict:
-        """
-        Transcribe audio data or audio file and translate to English.
-        
-        Args:
-            audio: Either a numpy array of audio data or a path to an audio file
-            
-        Returns:
-            Dictionary containing transcription results
-        """
-        model = self.load()
-        device = next(model.parameters()).device
-        
-        # Optimize options based on device
-        options = {
-            'verbose': False,
-            'word_timestamps': True,
-            'task': 'translate',
-            'best_of': 3,  # Reduced from 5
-            'beam_size': 3,  # Reduced from 5
-            'patience': 1.0,
-            'temperature': [0.0, 0.2, 0.4, 0.6],  # Reduced temperature range
-            'compression_ratio_threshold': 2.4,
-            'condition_on_previous_text': True,
-            'fp16': device.type == "cuda"  # Use fp16 only on GPU
-        }
-        
+        """Transcribe audio and translate to English."""
         try:
             # Load audio if path provided
             if isinstance(audio, (str, Path)):
-                logger.debug(f"Loading audio from file: {audio}")
+                logger.info(f"Loading audio from: {audio}")
                 audio = whisper.load_audio(str(audio))
-                logger.debug("Audio loaded successfully")
+                logger.debug(f"Audio loaded, length: {len(audio)/16000:.2f} seconds")
+
+            # Process in chunks if audio is long
+            if len(audio) > self.chunk_size * 16000:
+                return self._process_long_audio(audio)
             
-            # Process in chunks for long audio
-            if len(audio) > self.chunk_size * 16000:  # If longer than chunk size
-                logger.debug("Processing long audio in chunks")
-                chunks = self._chunk_audio(audio)
-                results = []
-                
-                for i, chunk in enumerate(chunks):
-                    logger.debug(f"Processing chunk {i+1}/{len(chunks)}")
-                    chunk_result = model.transcribe(chunk, **options)
-                    
-                    # Adjust timestamps for chunks after the first
-                    if i > 0:
-                        for segment in chunk_result["segments"]:
-                            segment["start"] += i * self.chunk_size
-                            segment["end"] += i * self.chunk_size
-                    
-                    results.append(chunk_result)
-                
-                # Merge results
-                final_result = results[0]
-                for result in results[1:]:
-                    final_result["segments"].extend(result["segments"])
-                    final_result["text"] += " " + result["text"]
-                
-                return final_result
-            
-            # For shorter audio, process normally
-            return model.transcribe(audio, **options)
-            
+            # Process normally for shorter audio
+            logger.info("Starting transcription")
+            result = self.model.transcribe(audio, **self.get_transcription_options())
+            logger.info("Transcription complete")
+            return result
+
         except Exception as e:
-            logger.error(f"Error during transcription: {e}")
-            raise
+            logger.error(f"Transcription failed: {str(e)}", exc_info=True)
+            raise RuntimeError(f"Transcription failed: {str(e)}") from e
+
+    def _process_long_audio(self, audio: np.ndarray) -> Dict:
+        """Process long audio in chunks"""
+        logger.info("Processing long audio in chunks")
+        chunk_length = self.chunk_size * 16000
+        chunks = [audio[i:i + chunk_length] for i in range(0, len(audio), chunk_length)]
+        
+        results = []
+        for i, chunk in enumerate(chunks, 1):
+            logger.info(f"Processing chunk {i}/{len(chunks)}")
+            chunk_result = self.model.transcribe(chunk, **self.get_transcription_options())
+            
+            # Adjust timestamps for chunks after the first
+            if i > 1:
+                for segment in chunk_result["segments"]:
+                    segment["start"] += (i-1) * self.chunk_size
+                    segment["end"] += (i-1) * self.chunk_size
+            
+            results.append(chunk_result)
+        
+        # Merge results
+        final_result = results[0]
+        final_result["text"] = " ".join(r["text"] for r in results)
+        final_result["segments"] = [s for r in results for s in r["segments"]]
+        
+        logger.info("Long audio processing complete")
+        return final_result
 
     def transcribe_wav(self, wav_path: Path) -> str:
-        """
-        Transcribe audio file and translate to English, returning formatted text.
-        
-        Args:
-            wav_path: Path to WAV file
-        
-        Returns:
-            Transcribed and translated text with timestamps
-        """
+        """Transcribe audio file and return formatted text with timestamps."""
         result = self.transcribe(str(wav_path))
-        
-        # Format text with timestamps
-        output_lines = []
-        for segment in result["segments"]:
-            timestamp = format_timestamp(segment["start"])
-            text = segment["text"].strip()
-            output_lines.append(f"[{timestamp}] {text}")
-        
-        return "\n".join(output_lines)
+        return "\n".join(
+            f"[{format_timestamp(segment['start'])}] {segment['text'].strip()}"
+            for segment in result["segments"]
+        )
 
 def format_timestamp(seconds: float) -> str:
     """Format seconds into HH:MM:SS"""

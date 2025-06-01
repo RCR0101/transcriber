@@ -7,73 +7,75 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def _ffmpeg_path() -> str:
-    """
-    Resolve the bundled `ffmpeg` if we're inside a PyInstaller executable,
-    otherwise fall back to whatever is on PATH.
-    """
+def get_ffmpeg_path() -> str:
+    """Get path to ffmpeg executable, using bundled version if available."""
     if getattr(sys, '_MEIPASS', None):
-        candidate = Path(sys._MEIPASS) / "ffmpeg"
-        if candidate.exists():
-            return str(candidate)
-    return shutil.which("ffmpeg") or "ffmpeg"
+        bundled_ffmpeg = Path(sys._MEIPASS) / "ffmpeg"
+        if bundled_ffmpeg.exists():
+            logger.debug(f"Using bundled ffmpeg: {bundled_ffmpeg}")
+            return str(bundled_ffmpeg)
+    
+    system_ffmpeg = shutil.which("ffmpeg")
+    if not system_ffmpeg:
+        raise RuntimeError("ffmpeg not found in system PATH")
+    
+    logger.debug(f"Using system ffmpeg: {system_ffmpeg}")
+    return system_ffmpeg
 
 def load_audio(file_path: str) -> np.ndarray:
-    """
-    Load audio file using soundfile and convert to the format whisper expects.
-    Falls back to whisper's load_audio if soundfile fails.
-    """
+    """Load and normalize audio file for transcription."""
     try:
-        logger.debug(f"Attempting to load audio file: {file_path}")
-        # Convert file path to string and normalize
         file_path = str(Path(file_path).resolve())
-        logger.debug(f"Resolved file path: {file_path}")
+        logger.info(f"Loading audio file: {file_path}")
         
-        # Try loading with soundfile first
+        # Try soundfile first for better performance
         try:
-            # Load audio file
             data, sample_rate = sf.read(file_path)
-            logger.debug(f"Successfully loaded audio with soundfile. Shape: {data.shape}, Sample rate: {sample_rate}")
+            logger.debug(f"Loaded audio: {data.shape}, {sample_rate}Hz")
             
             # Convert to mono if stereo
             if len(data.shape) > 1:
                 data = data.mean(axis=1)
+                logger.debug("Converted stereo to mono")
             
-            # Resample to 16kHz if needed
+            # For now, fall back to whisper if resampling needed
             if sample_rate != 16000:
-                # You might want to add resampling here
-                logger.warning("Audio resampling not implemented, falling back to whisper")
+                logger.info("Sample rate not 16kHz, using whisper loader")
                 return whisper.load_audio(file_path)
             
             return data
             
         except Exception as e:
-            logger.warning(f"Soundfile loading failed, falling back to whisper: {e}")
+            logger.info(f"Soundfile failed, using whisper loader: {e}")
             return whisper.load_audio(file_path)
             
     except Exception as e:
-        logger.error(f"Error loading audio file {file_path}: {e}")
-        raise RuntimeError(f"Failed to load audio file: {e}")
+        logger.error(f"Failed to load audio: {e}", exc_info=True)
+        raise RuntimeError(f"Could not load audio file: {e}") from e
 
-def extract_wav(src_mp4: Path, dst_wav: Path, *, sample_rate=16000):
-    """Convert MP4 (or any container) → mono WAV with FFmpeg."""
-    cmd = [
-        _ffmpeg_path(), "-y",
-        "-i", str(src_mp4),
-        "-ac", "1",
-        "-ar", str(sample_rate),
-        "-f", "wav",
-        str(dst_wav),
-    ]
-    logger.debug(f"Running FFmpeg command: {' '.join(cmd)}")
-    
-    # Run and capture stderr so we can show why it failed
+def extract_wav(src_path: Path, dst_path: Path, sample_rate: int = 16000) -> None:
+    """Convert audio/video file to WAV format using FFmpeg."""
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True)
-        if proc.returncode != 0:
-            logger.error("FFmpeg stderr ↓↓↓")
-            logger.error(proc.stderr)
-            raise subprocess.CalledProcessError(proc.returncode, cmd)
+        logger.info(f"Converting {src_path} to WAV")
+        cmd = [
+            get_ffmpeg_path(),
+            "-y",  # Overwrite output
+            "-i", str(src_path),
+            "-ac", "1",  # Mono
+            "-ar", str(sample_rate),
+            "-f", "wav",
+            str(dst_path)
+        ]
+        
+        logger.debug(f"Running: {' '.join(cmd)}")
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            logger.error(f"FFmpeg failed:\n{result.stderr}")
+            raise RuntimeError(f"FFmpeg conversion failed with code {result.returncode}")
+        
+        logger.info(f"Successfully created WAV file: {dst_path}")
+        
     except Exception as e:
-        logger.error(f"FFmpeg error: {e}")
-        raise
+        logger.error(f"Audio conversion failed: {e}", exc_info=True)
+        raise RuntimeError(f"Could not convert audio: {e}") from e
