@@ -19,6 +19,7 @@ dependencies = [
 [project.optional-dependencies]
 mlx = ["mlx-whisper"]
 faster = ["faster-whisper>=1.0"]
+denoise = ["deepfilternet>=0.5", "noisereduce>=3.0"]
 gui = ["gradio>=4.0"]
 dev = ["pytest", "ruff"]
 

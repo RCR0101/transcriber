@@ -34,6 +34,7 @@ echo Installing dependencies (this may take a few minutes)...
 .venv\Scripts\pip install -q --upgrade pip
 .venv\Scripts\pip install -q -r requirements.txt
 .venv\Scripts\pip install -q "faster-whisper>=1.0"
+.venv\Scripts\pip install -q "deepfilternet>=0.5" "noisereduce>=3.0" 2>nul
 
 if not exist ".env" (
     copy .env.example .env >nul

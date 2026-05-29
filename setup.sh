@@ -54,6 +54,10 @@ echo "Installing dependencies (this may take a few minutes)..."
 .venv/bin/pip install -q -r requirements.txt
 .venv/bin/pip install -q "$WHISPER_BACKEND"
 
+echo "Installing noise reduction (optional)..."
+.venv/bin/pip install -q "deepfilternet>=0.5" "noisereduce>=3.0" 2>/dev/null || \
+    echo "  Note: noise reduction packages could not be installed (optional, can be skipped)"
+
 # Set up .env
 if [ ! -f ".env" ]; then
     cp .env.example .env

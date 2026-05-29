@@ -33,6 +33,7 @@ def _transcribe_one(
     diarize: bool,
     translate: bool,
     vocabulary: str | None = None,
+    denoise: bool = False,
     quiet: bool,
 ) -> dict:
     suffix = input_file.suffix.lower()
@@ -42,9 +43,15 @@ def _transcribe_one(
         with tempfile.TemporaryDirectory() as tmpdir:
             wav_path = pathlib.Path(tmpdir) / "audio.wav"
             extract_wav(input_file, wav_path)
-            result = engine.transcribe(wav_path, diarize=diarize, translate=translate, vocabulary=vocabulary)
+            if denoise and not quiet:
+                click.echo("  Denoising audio...")
+            result = engine.transcribe(wav_path, diarize=diarize, translate=translate,
+                                       vocabulary=vocabulary, denoise=denoise)
     else:
-        result = engine.transcribe(input_file, diarize=diarize, translate=translate, vocabulary=vocabulary)
+        if denoise and not quiet:
+            click.echo("  Denoising audio...")
+        result = engine.transcribe(input_file, diarize=diarize, translate=translate,
+                                   vocabulary=vocabulary, denoise=denoise)
 
     result["source_file"] = input_file.name
     return result
@@ -85,6 +92,8 @@ def _write_output(result: dict, output: pathlib.Path, fmt: str) -> None:
               help="Output format")
 @click.option("-v", "--vocabulary", default=None,
               help="Comma-separated terms to bias recognition (names, jargon, acronyms)")
+@click.option("--denoise", is_flag=True,
+              help="Apply two-stage noise reduction before transcribing")
 @click.option("-q", "--quiet", is_flag=True,
               help="Reduce terminal output")
 def cli(
@@ -96,6 +105,7 @@ def cli(
     translate: bool,
     fmt: str,
     vocabulary: str | None,
+    denoise: bool,
     quiet: bool,
 ):
     """Transcribe audio/video files with speaker diarization.
@@ -119,6 +129,8 @@ def cli(
             click.echo("Diarization: disabled")
         if translate:
             click.echo("Mode: translate to English")
+        if denoise:
+            click.echo("Noise reduction: enabled")
         if batch:
             click.echo(f"Batch: {len(files)} files")
 
@@ -134,7 +146,7 @@ def cli(
             result = _transcribe_one(
                 engine, input_file,
                 diarize=not no_diarize, translate=translate,
-                vocabulary=vocabulary, quiet=quiet,
+                vocabulary=vocabulary, denoise=denoise, quiet=quiet,
             )
 
             out_path = output if output else input_file.with_suffix(f".{fmt}")

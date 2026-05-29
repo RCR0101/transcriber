@@ -79,7 +79,7 @@ def _write_output(result: dict, output_path: pathlib.Path, fmt: str) -> None:
 
 
 def _transcribe_file(engine, input_path: pathlib.Path, diarize: bool, translate: bool,
-                     vocabulary: str | None = None):
+                     vocabulary: str | None = None, denoise: bool = False):
     ffmpeg_err = _check_ffmpeg()
     if ffmpeg_err and input_path.suffix.lower() != ".wav":
         raise gr.Error(ffmpeg_err)
@@ -88,21 +88,23 @@ def _transcribe_file(engine, input_path: pathlib.Path, diarize: bool, translate:
         with tempfile.TemporaryDirectory() as tmpdir:
             wav_path = pathlib.Path(tmpdir) / "audio.wav"
             extract_wav(input_path, wav_path)
-            yield from _run_transcribe(engine, wav_path, input_path.name, diarize, translate, vocabulary)
+            yield from _run_transcribe(engine, wav_path, input_path.name, diarize, translate, vocabulary, denoise)
     else:
-        yield from _run_transcribe(engine, input_path, input_path.name, diarize, translate, vocabulary)
+        yield from _run_transcribe(engine, input_path, input_path.name, diarize, translate, vocabulary, denoise)
 
 
-def _run_transcribe(engine, audio_path, source_name, diarize, translate, vocabulary=None):
+def _run_transcribe(engine, audio_path, source_name, diarize, translate,
+                    vocabulary=None, denoise=False):
     result = engine.transcribe(audio_path, diarize=diarize, translate=translate,
-                               vocabulary=vocabulary, on_segment=lambda seg: None)
+                               vocabulary=vocabulary, denoise=denoise,
+                               on_segment=lambda seg: None)
     result["source_file"] = source_name
 
     for seg in result.get("segments", []):
         yield seg, result
 
 
-def transcribe_single(file, diarize, translate, fmt, hf_token, vocabulary):
+def transcribe_single(file, diarize, translate, fmt, hf_token, vocabulary, denoise):
     if file is None:
         gr.Warning("Please upload a file first.")
         return "<p>No file uploaded.</p>", None, None
@@ -121,7 +123,7 @@ def transcribe_single(file, diarize, translate, fmt, hf_token, vocabulary):
     result = None
     seg_idx = 0
 
-    for seg, res in _transcribe_file(engine, input_path, diarize, translate, vocab):
+    for seg, res in _transcribe_file(engine, input_path, diarize, translate, vocab, denoise):
         result = res
         html_parts.append(_format_segment_html(seg, seg_idx))
         seg_idx += 1
@@ -137,7 +139,7 @@ def transcribe_single(file, diarize, translate, fmt, hf_token, vocabulary):
     yield _wrap_transcript_html("\n".join(html_parts)), file, str(output_path)
 
 
-def transcribe_batch(folder_files, diarize, translate, fmt, hf_token, vocabulary):
+def transcribe_batch(folder_files, diarize, translate, fmt, hf_token, vocabulary, denoise):
     if not folder_files:
         gr.Warning("Please upload files first.")
         return "No files uploaded.", None
@@ -163,7 +165,7 @@ def transcribe_batch(folder_files, diarize, translate, fmt, hf_token, vocabulary
 
         try:
             result = None
-            for seg, res in _transcribe_file(engine, input_path, diarize, translate, vocab):
+            for seg, res in _transcribe_file(engine, input_path, diarize, translate, vocab, denoise):
                 result = res
                 preview_lines.append(_format_segment_line(seg))
                 yield "\n".join(preview_lines), None
@@ -230,6 +232,7 @@ def build_ui():
         with gr.Row():
             diarize = gr.Checkbox(value=True, label="Speaker Diarization")
             translate = gr.Checkbox(value=False, label="Translate to English")
+            denoise = gr.Checkbox(value=False, label="Noise Reduction")
             fmt = gr.Dropdown(choices=["json", "txt", "srt", "vtt"], value="json", label="Format")
 
         vocabulary = gr.Textbox(
@@ -258,7 +261,7 @@ def build_ui():
 
                 single_btn.click(
                     fn=transcribe_single,
-                    inputs=[file_input, diarize, translate, fmt, hf_token, vocabulary],
+                    inputs=[file_input, diarize, translate, fmt, hf_token, vocabulary, denoise],
                     outputs=[single_preview, audio_player, single_output],
                 )
 
@@ -274,7 +277,7 @@ def build_ui():
 
                 batch_btn.click(
                     fn=transcribe_batch,
-                    inputs=[batch_input, diarize, translate, fmt, hf_token, vocabulary],
+                    inputs=[batch_input, diarize, translate, fmt, hf_token, vocabulary, denoise],
                     outputs=[batch_preview, batch_output],
                 )
 

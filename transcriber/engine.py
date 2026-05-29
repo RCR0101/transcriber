@@ -139,9 +139,20 @@ class TranscriberEngine:
         diarize: bool = True,
         translate: bool = False,
         vocabulary: str | None = None,
+        denoise: bool = False,
         on_segment: Callable[[dict], None] | None = None,
     ) -> dict:
         audio_path = str(Path(audio_path).resolve())
+
+        if denoise:
+            import tempfile
+            from transcriber.denoise import denoise_file
+            logger.info("Running two-stage noise reduction")
+            tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+            tmp.close()
+            denoise_file(audio_path, tmp.name)
+            audio_path = tmp.name
+
         whisper_result = self.transcribe_raw(audio_path, translate=translate, vocabulary=vocabulary)
 
         if not diarize:

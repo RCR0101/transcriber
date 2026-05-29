@@ -14,9 +14,11 @@ Speaker identification powered by [pyannote.audio](https://github.com/pyannote/p
 - Labels each speaker (Speaker 1, Speaker 2, etc.)
 - Auto-detects language (English, Hindi, Hinglish, etc.)
 - Can translate any language to English
+- Two-stage noise reduction (DeepFilterNet + spectral gating)
+- Custom vocabulary to improve recognition of names, jargon, and acronyms
 - Outputs as JSON, plain text, or subtitles (SRT/VTT)
 - Process one file or an entire folder at once
-- Web-based GUI with live preview
+- Web-based GUI with live preview and synced audio playback
 
 ## Quick Start
 
@@ -115,7 +117,9 @@ The web interface has:
 - **Single File** tab — upload one file, see the transcript appear live as it processes
 - **Batch** tab — upload multiple files, transcribe them all
 - **Settings** panel — paste your HuggingFace token here (or set it in `.env`)
-- Toggle speaker diarization, translation, and output format
+- Toggle speaker diarization, noise reduction, translation, and output format
+- Custom vocabulary field for names, acronyms, and jargon
+- Click any transcript line to jump to that point in the audio
 
 ## Command Line
 
@@ -134,6 +138,12 @@ transcribe recording.mp3 --translate
 # Skip speaker labels (no token needed)
 transcribe recording.mp3 --no-diarize
 
+# Clean up noisy audio before transcribing
+transcribe recording.mp3 --denoise
+
+# Help Whisper with specific terms
+transcribe recording.mp3 -v "SARC, BITS Pilani, PyTorch"
+
 # Multiple files
 transcribe file1.mp3 file2.wav file3.m4a
 
@@ -150,6 +160,8 @@ transcribe ./recordings/
 | `--hf-token` | HuggingFace token (alternative to `.env` file) |
 | `--no-diarize` | Skip speaker identification |
 | `--translate` | Translate everything to English |
+| `--denoise` | Two-stage noise reduction (DeepFilterNet + spectral gating) |
+| `-v, --vocabulary` | Comma-separated terms to improve recognition accuracy |
 | `--format` | `json`, `txt`, `srt`, or `vtt` (default: `json`) |
 | `-q, --quiet` | Less terminal output |
 
