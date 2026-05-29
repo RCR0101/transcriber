@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "transcriber"
+version = "2.0.0"
+description = "Audio transcription with speaker diarization"
+requires-python = ">=3.11"
+dependencies = [
+    "pyannote.audio>=3.1",
+    "torch>=2.2",
+    "click>=8.1",
+    "soundfile>=0.12",
+    "python-dotenv>=1.0",
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+mlx = ["mlx-whisper"]
+faster = ["faster-whisper>=1.0"]
+gui = ["gradio>=4.0"]
+dev = ["pytest", "ruff"]
+
+[project.scripts]
+transcribe = "transcriber.cli:cli"
+
+[tool.setuptools.packages.find]
+include = ["transcriber*"]

@@ -24,6 +24,9 @@ pip-wheel-metadata/
 # macOS
 .DS_Store
 
-# Models directory (populated by fetch_model.py)
+# Models directory
 models/
 recs/
+
+# Environment
+.env

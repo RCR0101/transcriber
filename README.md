@@ -1,133 +1,185 @@
-# Transcriber GUI
+# Transcriber
 
-A simple GUI wrapper for OpenAI's Whisper speech recognition model, allowing easy transcription of audio and video files to text.
+Transcribe audio and video files with speaker labels. Runs locally — nothing is sent to the cloud.
 
-## Requirements
+Works on **macOS** (Apple Silicon), **Windows**, and **Linux**. Automatically uses the fastest backend for your platform:
+- **Apple Silicon Mac** — [mlx-whisper](https://github.com/ml-explore/mlx-examples/tree/main/whisper) (optimised for M-series chips)
+- **Windows / Linux / Intel Mac** — [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (CPU or NVIDIA GPU)
 
-- Python 3.12 or higher with tkinter installed
-  - **Note**: tkinter must be installed with Python. On most systems:
-    - Windows: Included by default
-    - macOS: Included by default
-    - Linux: Install via `sudo apt-get install python3-tk` (Ubuntu/Debian) or equivalent
+Speaker identification powered by [pyannote.audio](https://github.com/pyannote/pyannote-audio).
 
-- FFmpeg installed and available in PATH
-  - Windows: Download from [FFmpeg website](https://ffmpeg.org/download.html)
-  - macOS: Install via Homebrew: `brew install ffmpeg`
-  - Linux: `sudo apt-get install ffmpeg` (Ubuntu/Debian) or equivalent
+## What it does
 
-## Installation
+- Transcribes audio/video files (mp3, mp4, wav, m4a, mov, flac, ogg, webm)
+- Labels each speaker (Speaker 1, Speaker 2, etc.)
+- Auto-detects language (English, Hindi, Hinglish, etc.)
+- Can translate any language to English
+- Outputs as JSON, plain text, or subtitles (SRT/VTT)
+- Process one file or an entire folder at once
+- Web-based GUI with live preview
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/yourusername/transcriber.git
-   cd transcriber
-   ```
+## Quick Start
 
-2. Create and activate a virtual environment:
-   ```bash
-   # Windows
-   python -m venv .venv
-   .venv\Scripts\activate
+### 1. Install prerequisites
 
-   # macOS/Linux
-   python3 -m venv .venv
-   source .venv/bin/activate
-   ```
+You need **Python 3.11+** and **FFmpeg**.
 
-3. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
+<details>
+<summary><b>macOS</b></summary>
 
-## Running the Application
-
-### Development Mode
-Run directly with Python:
 ```bash
+# Install Homebrew if you don't have it
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+# Install Python and FFmpeg
+brew install python ffmpeg
+```
+</details>
+
+<details>
+<summary><b>Windows</b></summary>
+
+1. Download and install Python from [python.org](https://www.python.org/downloads/). **Check "Add Python to PATH"** during install.
+2. Download FFmpeg from [ffmpeg.org](https://ffmpeg.org/download.html) and add it to your PATH, or install via:
+   ```
+   winget install FFmpeg
+   ```
+</details>
+
+<details>
+<summary><b>Linux (Ubuntu/Debian)</b></summary>
+
+```bash
+sudo apt update
+sudo apt install python3 python3-venv ffmpeg
+```
+</details>
+
+### 2. Get a HuggingFace token (free)
+
+This is needed for speaker identification (who said what). Skip this if you only need the text.
+
+1. Sign up at [huggingface.co](https://huggingface.co) (it's free)
+2. Go to [Settings > Access Tokens](https://huggingface.co/settings/tokens) and create a token
+3. Visit each link below and click **"Agree and access repository"**:
+   - [pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1)
+   - [pyannote/segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0)
+   - [pyannote/speaker-diarization-community-1](https://huggingface.co/pyannote/speaker-diarization-community-1)
+
+### 3. Set up the project
+
+**macOS / Linux:**
+```bash
+git clone https://github.com/RCR0101/transcriber.git
+cd transcriber
+./setup.sh
+```
+
+**Windows:**
+```
+git clone https://github.com/RCR0101/transcriber.git
+cd transcriber
+setup.bat
+```
+
+The setup script creates a virtual environment, installs everything (including the right Whisper backend for your platform), and creates a `.env` file.
+
+After it finishes, open `.env` in any text editor and paste your HuggingFace token:
+
+```
+HF_TOKEN=hf_paste_your_token_here
+```
+
+### 4. Run it
+
+**macOS / Linux:**
+```bash
+source .venv/bin/activate
 python gui.py
 ```
 
-### Building Standalone Executable
-Build a standalone executable using PyInstaller:
+**Windows:**
+```
+.venv\Scripts\activate
+python gui.py
+```
+
+This opens a web page at `http://localhost:7860`. Upload a file and click **Transcribe**.
+
+> Don't have a HuggingFace token? Uncheck **Speaker Diarization** in the GUI — it will still transcribe, just without speaker labels.
+
+## GUI
+
+The web interface has:
+
+- **Single File** tab — upload one file, see the transcript appear live as it processes
+- **Batch** tab — upload multiple files, transcribe them all
+- **Settings** panel — paste your HuggingFace token here (or set it in `.env`)
+- Toggle speaker diarization, translation, and output format
+
+## Command Line
+
+For power users or scripting:
+
 ```bash
-# Windows
-pyinstaller gui.spec
+# Single file
+transcribe recording.mp3
 
-# macOS/Linux
-python -m PyInstaller gui.spec
+# Choose output format
+transcribe recording.mp3 --format srt
+
+# Translate to English
+transcribe recording.mp3 --translate
+
+# Skip speaker labels (no token needed)
+transcribe recording.mp3 --no-diarize
+
+# Multiple files
+transcribe file1.mp3 file2.wav file3.m4a
+
+# Entire folder
+transcribe ./recordings/
 ```
 
-The executable will be created in the `dist` directory.
+**All options:**
 
-## Usage
+| Flag | What it does |
+|------|-------------|
+| `-o, --output` | Where to save the output (single file only) |
+| `-m, --model` | Which Whisper model to use (auto-detected per platform) |
+| `--hf-token` | HuggingFace token (alternative to `.env` file) |
+| `--no-diarize` | Skip speaker identification |
+| `--translate` | Translate everything to English |
+| `--format` | `json`, `txt`, `srt`, or `vtt` (default: `json`) |
+| `-q, --quiet` | Less terminal output |
 
-1. Launch the application
-2. Click "Browse" to select an audio/video file (supported formats: mp3, mp4, wav, m4a, mov)
-3. Optionally specify an output text file location (defaults to same directory as input)
-4. Click "Transcribe" and wait for the process to complete
-5. The transcribed text will be saved to the specified output file
+## Output Formats
 
-## Model Selection and Performance
+**JSON** — structured data with speaker labels, timestamps, and full text.
 
-The application now uses the "small" model by default for optimal speed while maintaining good accuracy. You can modify the model size in `transcriber/engine.py` by changing the `model_size` parameter in the `WhisperEngine` class:
-
-```python
-def __init__(self, model_size: str = "small"):  # Change model size here
+**TXT** — simple readable format:
+```
+[00:00:05] [SPEAKER_00] Hello, welcome to the interview.
+[00:00:08] [SPEAKER_01] Thanks for having me.
 ```
 
-Available models and their characteristics:
-- **tiny** (39M parameters): Fastest but lowest accuracy
-- **base** (74M parameters): Fast with decent accuracy
-- **small** (244M parameters): Default, good balance of speed and accuracy
-- **medium** (769M parameters): Higher accuracy but ~2x slower than small
-- **large** (1550M parameters): Highest accuracy but significantly slower
-
-To change the model, you can either:
-1. Modify the default in `transcriber/engine.py`
-2. Pass the model size when creating the engine instance in `gui.py`
-
-Performance Optimizations:
-- **GPU Acceleration**: Automatically enabled if CUDA-capable GPU is available
-- **Chunked Processing**: Long audio files are automatically processed in chunks
-- **Memory Management**: Optimized for handling large files
-- **Half Precision**: Automatically enabled on GPU for faster processing
-
-## Notes
-
-- First run will download the selected Whisper model:
-  - tiny: ~50MB
-  - base: ~150MB
-  - small: ~500MB
-  - medium: ~1.5GB
-  - large: ~3GB
-- Transcription speed depends on:
-  - Selected model size
-  - CPU/GPU capabilities
-  - Audio file length
-- All processing is done locally - no internet connection required after model download
-- For best performance:
-  - Use GPU if available (5-10x faster)
-  - Use "small" model for good balance of speed/accuracy
-  - For very long files, the chunking system prevents memory issues
+**SRT / VTT** — subtitle files you can use with video players or upload to YouTube.
 
 ## Troubleshooting
 
-- If you get "FFmpeg not found" error, ensure FFmpeg is properly installed and in your system PATH
-- If you get tkinter-related errors, ensure Python was installed with tkinter support
-- For GPU support, ensure you have CUDA installed and the correct torch version
-- On Windows:
-  - If you get "system cannot find file specified" errors:
-    - Try moving files out of the Downloads folder
-    - Avoid paths with special characters or non-English characters
-    - If using spaces in file paths, the application will handle them automatically
-  - If you get "access is denied" errors:
-    - Move the executable to a non-system folder (e.g., Documents)
-    - Right-click the executable and select "Run as administrator"
-    - Check Windows Defender or antivirus settings
-    - Make sure you have write permissions in the folder
-  - If you get permission errors, try running the application as administrator
+**"FFmpeg is not installed"** — Install FFmpeg (see step 1 above) and try again.
 
+**"HF_TOKEN required"** — You need a HuggingFace token for speaker labels. Either add it to `.env`, paste it in the GUI settings, or use `--no-diarize` to skip.
 
-## Fully Functional Commits
-- Commit **fix: and more** , (9efd22a12baf1b8ca3e912150366652bcb227b31) (It is not very time-friendly)
-- Commit **feat: might have made it more efficient**, (7030b9d42ef2fdd53fede5a3e90ce1fda29d10c4) (Faster but may be less accurate)
+**"403 Forbidden" or "gated repo"** — You need to accept the model terms. Visit the links in step 2 above and click "Agree and access repository".
+
+**First run is slow** — The first time downloads a ~3 GB model. After that it's cached and starts instantly.
+
+**Transcription is wrong** — Try a different model with `-m`. The default is a good balance of speed and accuracy.
+
+## Notes
+
+- All processing happens on your machine. Nothing is uploaded anywhere.
+- Works on macOS (Apple Silicon), Windows, and Linux.
+- Apple Silicon Macs use mlx-whisper for best performance. All other platforms use faster-whisper with CPU or NVIDIA GPU.
+- First run downloads the Whisper model (~3 GB). Runs offline after that.

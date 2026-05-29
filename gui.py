@@ -1,273 +1,285 @@
-import tkinter as tk
-from tkinter import filedialog, ttk, messagebox
-import subprocess
+import json
+import logging
 import os
 import pathlib
-import sys
-import threading
-import importlib.util
-from queue import Queue, Empty
-import multiprocessing
-import torch
-import logging
+import shutil
 import tempfile
-from datetime import datetime
 
-# Set up logging
-log_dir = tempfile.gettempdir()
-log_file = os.path.join(log_dir, f'transcriber_gui_{datetime.now():%Y%m%d_%H%M%S}.log')
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(log_file),
-        logging.StreamHandler()
-    ]
+import gradio as gr
+from dotenv import load_dotenv
+
+from transcriber.audio import extract_wav
+from transcriber.engine import (
+    TranscriberEngine,
+    format_srt,
+    format_timestamp,
+    format_vtt,
 )
+
+load_dotenv()
 logger = logging.getLogger(__name__)
-logger.info(f"Starting application. Log file: {log_file}")
-logger.info(f"Python version: {sys.version}")
-logger.info(f"System platform: {sys.platform}")
 
-# Configure PyTorch for single-threaded operation
-torch.set_num_threads(1)
-os.environ.update({
-    "MKL_NUM_THREADS": "1",
-    "NUMEXPR_NUM_THREADS": "1",
-    "OMP_NUM_THREADS": "1",
-    "OPENBLAS_NUM_THREADS": "1"
-})
+AUDIO_EXTENSIONS = {".mp3", ".mp4", ".wav", ".m4a", ".mov", ".flac", ".ogg", ".webm"}
 
-def normalize_path(path: str) -> str:
-    """Convert path to absolute and normalize for platform compatibility."""
-    if not path:
-        return path
-    try:
-        return str(pathlib.Path(os.path.expanduser(path)).resolve())
-    except Exception as e:
-        logger.error(f"Path normalization failed: {e}", exc_info=True)
-        return path
 
-def get_bundle_dir() -> str:
-    """Get the application's bundle directory."""
-    try:
-        if getattr(sys, 'frozen', False):
-            bundle_dir = sys._MEIPASS
-            logger.info(f"Running from PyInstaller bundle: {bundle_dir}")
-        else:
-            bundle_dir = os.path.dirname(os.path.abspath(__file__))
-            logger.info(f"Running in development mode: {bundle_dir}")
-        return bundle_dir
-    except Exception as e:
-        logger.error(f"Failed to get bundle directory: {e}", exc_info=True)
-        return os.path.dirname(os.path.abspath(__file__))
+def _check_ffmpeg() -> str | None:
+    if shutil.which("ffmpeg"):
+        return None
+    return (
+        "FFmpeg is not installed. It's required to process audio files.\n\n"
+        "Install it with:\n"
+        "  macOS:  brew install ffmpeg\n"
+        "  Ubuntu: sudo apt install ffmpeg\n"
+        "  Windows: download from https://ffmpeg.org/download.html"
+    )
 
-class TranscriberGUI:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Audio Transcriber")
-        self.bundle_dir = get_bundle_dir()
-        
-        # Initialize transcription process tracking
-        self.transcription_thread = None
-        self.is_transcribing = False
-        
-        self.setup_gui()
-        self.message_queue = Queue()
-        self.check_message_queue()
-        logger.info("GUI initialized")
 
-    def setup_gui(self):
-        """Set up the GUI elements."""
-        # Main frame
-        main_frame = ttk.Frame(self.root, padding="10")
-        main_frame.grid(row=0, column=0, sticky="nsew")
-        self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(0, weight=1)
+def _resolve_token(hf_token: str, diarize: bool) -> str | None:
+    token = hf_token.strip() if hf_token else os.environ.get("HF_TOKEN", "")
+    if diarize and not token:
+        return None
+    return token or None
 
-        # Input file selection
-        ttk.Label(main_frame, text="Input File:").grid(row=0, column=0, sticky="w", pady=5)
-        self.input_path = tk.StringVar()
-        ttk.Entry(main_frame, textvariable=self.input_path, width=50).grid(row=0, column=1, padx=5)
-        ttk.Button(main_frame, text="Browse", command=self.select_input).grid(row=0, column=2)
 
-        # Output file selection
-        ttk.Label(main_frame, text="Output File:").grid(row=1, column=0, sticky="w", pady=5)
-        self.output_path = tk.StringVar()
-        ttk.Entry(main_frame, textvariable=self.output_path, width=50).grid(row=1, column=1, padx=5)
-        ttk.Button(main_frame, text="Browse", command=self.select_output).grid(row=1, column=2)
+def _format_segment_line(seg: dict) -> str:
+    ts = format_timestamp(seg["start"])
+    speaker = seg.get("speaker")
+    prefix = f"[{speaker}] " if speaker else ""
+    return f"[{ts}] {prefix}{seg['text']}"
 
-        # Progress display
-        self.progress_var = tk.StringVar(value="Ready")
-        ttk.Label(main_frame, textvariable=self.progress_var).grid(row=2, column=0, columnspan=3, pady=10)
 
-        # Progress bar
-        self.progress_bar = ttk.Progressbar(main_frame, mode='indeterminate')
-        self.progress_bar.grid(row=3, column=0, columnspan=3, sticky="ew", pady=5)
-        self.progress_bar.grid_remove()
+def _format_segment_html(seg: dict, index: int) -> str:
+    ts = format_timestamp(seg["start"])
+    speaker = seg.get("speaker")
+    speaker_html = f'<span style="color:#6366f1;font-weight:600">[{speaker}]</span> ' if speaker else ""
+    seconds = seg["start"]
+    return (
+        f'<div class="seg" data-time="{seconds}" data-idx="{index}" '
+        f'style="padding:6px 8px;margin:2px 0;border-radius:4px;cursor:pointer;'
+        f'transition:background 0.15s" '
+        f'onmouseenter="this.style.background=\'#f1f5f9\'" '
+        f'onmouseleave="this.style.background=\'transparent\'" '
+        f'onclick="seekAudio({seconds})">'
+        f'<span style="color:#94a3b8;font-size:0.85em;margin-right:8px">[{ts}]</span>'
+        f'{speaker_html}{seg["text"]}'
+        f'</div>'
+    )
 
-        # Transcribe button
-        self.transcribe_btn = ttk.Button(main_frame, text="Transcribe", command=self.start_transcription)
-        self.transcribe_btn.grid(row=4, column=0, columnspan=3, pady=10)
 
-        # Configure grid weights
-        for i in range(3):
-            main_frame.columnconfigure(i, weight=1 if i == 1 else 0)
+def _write_output(result: dict, output_path: pathlib.Path, fmt: str) -> None:
+    if fmt == "json":
+        output_path.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
+    elif fmt == "srt":
+        output_path.write_text(format_srt(result), encoding="utf-8")
+    elif fmt == "vtt":
+        output_path.write_text(format_vtt(result), encoding="utf-8")
+    else:
+        lines = [_format_segment_line(seg) for seg in result["segments"]]
+        output_path.write_text("\n".join(lines), encoding="utf-8")
 
-    def select_input(self):
-        """Handle input file selection."""
-        filename = filedialog.askopenfilename(
-            title="Select Audio/Video File",
-            filetypes=[("Audio/Video Files", "*.mp3 *.mp4 *.wav *.m4a *.mov")]
-        )
-        if filename:
-            norm_path = normalize_path(filename)
-            logger.info(f"Selected input file: {norm_path}")
-            self.input_path.set(norm_path)
-            
-            # Set default output path
-            output = pathlib.Path(norm_path).with_suffix('.txt')
-            self.output_path.set(str(output))
 
-    def select_output(self):
-        """Handle output file selection."""
-        filename = filedialog.asksaveasfilename(
-            title="Save Transcript As",
-            defaultextension=".txt",
-            filetypes=[("Text Files", "*.txt")]
-        )
-        if filename:
-            norm_path = normalize_path(filename)
-            logger.info(f"Selected output file: {norm_path}")
-            self.output_path.set(norm_path)
+def _transcribe_file(engine, input_path: pathlib.Path, diarize: bool, translate: bool,
+                     vocabulary: str | None = None):
+    ffmpeg_err = _check_ffmpeg()
+    if ffmpeg_err and input_path.suffix.lower() != ".wav":
+        raise gr.Error(ffmpeg_err)
 
-    def check_message_queue(self):
-        """Process messages from the transcription thread."""
-        try:
-            while True:
-                msg = self.message_queue.get_nowait()
-                msg_type = msg.get('type', '')
-                msg_text = msg.get('text', '')
-                
-                if msg_type == 'progress':
-                    self.progress_var.set(msg_text)
-                    logger.info(f"Progress: {msg_text}")
-                elif msg_type == 'complete':
-                    self.progress_var.set(msg_text)
-                    self.progress_bar.stop()
-                    self.progress_bar.grid_remove()
-                    self.transcribe_btn.config(state='normal')
-                    self.is_transcribing = False
-                    logger.info("Transcription complete")
-                elif msg_type == 'error':
-                    self.progress_var.set(f"Error: {msg_text}")
-                    self.progress_bar.stop()
-                    self.progress_bar.grid_remove()
-                    self.transcribe_btn.config(state='normal')
-                    self.is_transcribing = False
-                    logger.error(f"Transcription error: {msg_text}")
-                    messagebox.showerror("Error", msg_text)
-        except Empty:
-            pass
-        finally:
-            self.root.after(100, self.check_message_queue)
+    if input_path.suffix.lower() != ".wav":
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wav_path = pathlib.Path(tmpdir) / "audio.wav"
+            extract_wav(input_path, wav_path)
+            yield from _run_transcribe(engine, wav_path, input_path.name, diarize, translate, vocabulary)
+    else:
+        yield from _run_transcribe(engine, input_path, input_path.name, diarize, translate, vocabulary)
 
-    def validate_paths(self) -> bool:
-        """Validate input and output paths."""
-        input_file = self.input_path.get()
-        output_file = self.output_path.get()
 
-        if not input_file:
-            messagebox.showerror("Error", "Please select an input file")
-            return False
+def _run_transcribe(engine, audio_path, source_name, diarize, translate, vocabulary=None):
+    result = engine.transcribe(audio_path, diarize=diarize, translate=translate,
+                               vocabulary=vocabulary, on_segment=lambda seg: None)
+    result["source_file"] = source_name
 
-        if not os.path.exists(input_file):
-            messagebox.showerror("Error", f"Input file not found: {input_file}")
-            return False
+    for seg in result.get("segments", []):
+        yield seg, result
+
+
+def transcribe_single(file, diarize, translate, fmt, hf_token, vocabulary):
+    if file is None:
+        gr.Warning("Please upload a file first.")
+        return "<p>No file uploaded.</p>", None, None
+
+    token = _resolve_token(hf_token, diarize)
+    if diarize and token is None:
+        gr.Warning("HuggingFace token is required for speaker diarization. "
+                   "Enter your token in Settings, or uncheck Speaker Diarization.")
+        return "<p>Missing HuggingFace token.</p>", None, None
+
+    input_path = pathlib.Path(file)
+    vocab = vocabulary.strip() if vocabulary else None
+    engine = TranscriberEngine(hf_token=token)
+
+    html_parts = []
+    result = None
+    seg_idx = 0
+
+    for seg, res in _transcribe_file(engine, input_path, diarize, translate, vocab):
+        result = res
+        html_parts.append(_format_segment_html(seg, seg_idx))
+        seg_idx += 1
+        yield _wrap_transcript_html("\n".join(html_parts)), file, None
+
+    if result is None:
+        yield "<p>No segments found.</p>", file, None
+        return
+
+    output_path = input_path.with_suffix(f".{fmt}")
+    _write_output(result, output_path, fmt)
+
+    yield _wrap_transcript_html("\n".join(html_parts)), file, str(output_path)
+
+
+def transcribe_batch(folder_files, diarize, translate, fmt, hf_token, vocabulary):
+    if not folder_files:
+        gr.Warning("Please upload files first.")
+        return "No files uploaded.", None
+
+    token = _resolve_token(hf_token, diarize)
+    if diarize and token is None:
+        gr.Warning("HuggingFace token is required for speaker diarization. "
+                   "Enter your token in Settings, or uncheck Speaker Diarization.")
+        return "Missing HuggingFace token.", None
+
+    vocab = vocabulary.strip() if vocabulary else None
+    engine = TranscriberEngine(hf_token=token)
+    preview_lines = []
+    output_paths = []
+    failed = []
+
+    files = [pathlib.Path(f) for f in folder_files]
+    total = len(files)
+
+    for i, input_path in enumerate(files, 1):
+        preview_lines.append(f"\n--- [{i}/{total}] {input_path.name} ---")
+        yield "\n".join(preview_lines), None
 
         try:
-            output_dir = os.path.dirname(output_file) if output_file else None
-            if output_dir and not os.path.exists(output_dir):
-                os.makedirs(output_dir)
-            return True
+            result = None
+            for seg, res in _transcribe_file(engine, input_path, diarize, translate, vocab):
+                result = res
+                preview_lines.append(_format_segment_line(seg))
+                yield "\n".join(preview_lines), None
+
+            if result:
+                output_path = input_path.with_suffix(f".{fmt}")
+                _write_output(result, output_path, fmt)
+                output_paths.append(str(output_path))
         except Exception as e:
-            messagebox.showerror("Error", f"Cannot access output location: {e}")
-            return False
+            logger.error(f"Failed: {input_path}", exc_info=True)
+            failed.append(input_path.name)
+            preview_lines.append(f"  FAILED: {e}")
+            yield "\n".join(preview_lines), None
 
-    def start_transcription(self):
-        """Start the transcription process."""
-        # Prevent multiple transcription processes
-        if self.is_transcribing:
-            logger.warning("Transcription already in progress")
-            return
+    succeeded = total - len(failed)
+    preview_lines.append(f"\nDone: {succeeded}/{total} succeeded")
+    output_summary = "\n".join(output_paths) if output_paths else None
+    yield "\n".join(preview_lines), output_summary
 
-        if not self.validate_paths():
-            return
 
-        self.is_transcribing = True
-        self.transcribe_btn.config(state='disabled')
-        self.progress_bar.grid()
-        self.progress_bar.start(10)
-        self.progress_var.set("Transcribing... Please wait")
+def _wrap_transcript_html(inner: str) -> str:
+    return (
+        f'<div style="font-family:system-ui,-apple-system,sans-serif;font-size:14px;'
+        f'max-height:400px;overflow-y:auto;padding:4px">{inner}</div>'
+    )
 
-        # Start transcription in a new thread
-        self.transcription_thread = threading.Thread(
-            target=self.run_transcription,
-            args=(self.input_path.get(), self.output_path.get()),
-            daemon=True
+
+SEEK_JS = """
+function seekAudio(time) {
+    const audioElements = document.querySelectorAll('audio');
+    for (const audio of audioElements) {
+        if (audio.src) {
+            audio.currentTime = time;
+            audio.play();
+            break;
+        }
+    }
+}
+"""
+
+
+def build_ui():
+    with gr.Blocks(
+        title="Audio Transcriber",
+        theme=gr.themes.Soft(),
+        head=f"<script>{SEEK_JS}</script>",
+    ) as app:
+        gr.Markdown("# Audio Transcriber")
+        gr.Markdown("Transcribe audio/video with speaker diarization. Runs locally.")
+
+        with gr.Accordion("Settings", open=False):
+            hf_token = gr.Textbox(
+                label="HuggingFace Token",
+                placeholder="hf_... (required for speaker diarization)",
+                value=os.environ.get("HF_TOKEN", ""),
+                type="password",
+            )
+            gr.Markdown(
+                "Get a free token from [huggingface.co/settings/tokens]"
+                "(https://huggingface.co/settings/tokens). "
+                "Only needed if Speaker Diarization is enabled."
+            )
+
+        with gr.Row():
+            diarize = gr.Checkbox(value=True, label="Speaker Diarization")
+            translate = gr.Checkbox(value=False, label="Translate to English")
+            fmt = gr.Dropdown(choices=["json", "txt", "srt", "vtt"], value="json", label="Format")
+
+        vocabulary = gr.Textbox(
+            label="Custom Vocabulary",
+            placeholder="e.g. SARC, BITS Pilani, Aryaman, PyTorch, MLX",
+            info="Comma-separated names, acronyms, or jargon to help recognition accuracy",
         )
-        self.transcription_thread.start()
-        logger.info("Started transcription thread")
 
-    def run_transcription(self, input_file: str, output_file: str):
-        """Run the transcription process in a separate thread."""
-        try:
-            # Add bundle directory to Python path
-            if self.bundle_dir not in sys.path:
-                sys.path.insert(0, self.bundle_dir)
+        with gr.Tabs():
+            with gr.TabItem("Single File"):
+                file_input = gr.File(label="Upload Audio/Video", file_types=[
+                    ".mp3", ".mp4", ".wav", ".m4a", ".mov", ".flac", ".ogg", ".webm"
+                ])
+                single_btn = gr.Button("Transcribe", variant="primary")
 
-            from transcriber.engine import WhisperEngine
-            
-            # Initialize engine and transcribe
-            engine = WhisperEngine()
-            logger.info(f"Processing file: {input_file}")
-            result = engine.transcribe(input_file)
+                audio_player = gr.Audio(
+                    label="Playback",
+                    type="filepath",
+                    interactive=False,
+                )
+                single_preview = gr.HTML(
+                    label="Transcript",
+                    value="<p style='color:#94a3b8'>Transcript will appear here. Click any line to jump to that point in the audio.</p>",
+                )
+                single_output = gr.Textbox(label="Output Path", interactive=False)
 
-            # Save results
-            with open(output_file, 'w', encoding='utf-8') as f:
-                f.write(result['text'])
-            logger.info(f"Saved transcript to: {output_file}")
+                single_btn.click(
+                    fn=transcribe_single,
+                    inputs=[file_input, diarize, translate, fmt, hf_token, vocabulary],
+                    outputs=[single_preview, audio_player, single_output],
+                )
 
-            self.message_queue.put({
-                'type': 'complete',
-                'text': f"Transcription complete! Saved to: {output_file}"
-            })
+            with gr.TabItem("Batch"):
+                batch_input = gr.File(
+                    label="Upload Multiple Audio Files",
+                    file_count="multiple",
+                    file_types=[".mp3", ".mp4", ".wav", ".m4a", ".mov", ".flac", ".ogg", ".webm"],
+                )
+                batch_btn = gr.Button("Transcribe All", variant="primary")
+                batch_preview = gr.Textbox(label="Live Preview", lines=15, interactive=False)
+                batch_output = gr.Textbox(label="Output Paths", interactive=False)
 
-        except Exception as e:
-            logger.error("Transcription failed", exc_info=True)
-            self.message_queue.put({
-                'type': 'error',
-                'text': str(e)
-            })
+                batch_btn.click(
+                    fn=transcribe_batch,
+                    inputs=[batch_input, diarize, translate, fmt, hf_token, vocabulary],
+                    outputs=[batch_preview, batch_output],
+                )
 
-def main():
-    """Start the application."""
-    # Enable multiprocessing support for PyInstaller
-    multiprocessing.freeze_support()
-    
-    try:
-        root = tk.Tk()
-        root.title("Audio Transcriber")
-        
-        # Prevent multiple instances
-        app = TranscriberGUI(root)
-        
-        # Configure window
-        root.protocol("WM_DELETE_WINDOW", root.quit)  # Handle window close properly
-        root.mainloop()
-    except Exception as e:
-        logger.critical("Application failed to start", exc_info=True)
-        messagebox.showerror("Critical Error", f"Application failed to start: {e}")
+    return app
+
 
 if __name__ == "__main__":
-    main() 
+    build_ui().launch()
